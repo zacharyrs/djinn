@@ -31,6 +31,8 @@ SUBCOMMANDS:
 
 it's pretty much the same as [`genie`](https://github.com/arkane-systems/genie#usage)
 
+note: the subcommands infer, meaning you can just write `i`, `s`, and `r`.
+
 ## requirements
 
 like [`genie`](https://github.com/arkane-systems/genie), `djinn` requires a few things...
