@@ -83,7 +83,7 @@ fn main() {
     }
 
     if unistd::geteuid() != unistd::Uid::from_raw(0) {
-        println!("djinn needs to be run as root - try the setuid bit");
+        println!("! djinn needs to be run as root - try the setuid bit");
         return;
     }
 
@@ -92,7 +92,7 @@ fn main() {
         .to_lowercase()
         .contains("microsoft")
     {
-        println!("djinn must be run within wsl");
+        println!("! djinn must be run within wsl");
         return;
     }
 
@@ -100,7 +100,7 @@ fn main() {
         let mnt: Vec<_> = line.split_whitespace().collect();
         if mnt[1] == "/" {
             if mnt[2] == "lxfs" {
-                println!("djinn only supports wsl2");
+                println!("! djinn only supports wsl2");
                 return;
             } else {
                 break;
@@ -182,7 +182,8 @@ fn main() {
         }
         if bottle_inside {
             println!("djinn: no need to enter bottle - we're in it already");
-            unistd::execve(&command[0], &command, &envars).expect("failed to launch shell");
+            _get_env(&mut envars, &mut envnames);
+            unistd::execvpe(&command[0], &command, &envars).expect("failed to launch shell");
             return;
         }
         _grab_root(verb);
@@ -319,7 +320,7 @@ fn run(
 fn _backup_hostname(verb: bool) -> io::Result<String> {
     // dump existing hostname
     if verb {
-        println!("  backing up hostname");
+        println!("djinn:  backing up hostname");
     }
 
     // check if hostname backed up -> only backup if not currently
@@ -329,7 +330,7 @@ fn _backup_hostname(verb: bool) -> io::Result<String> {
         fs::write("/run/djinn.hostname.orig", &hostname)?;
     } else {
         if verb {
-            println!("  - hostname already backed up, not overwriting");
+            println!("djinn:  - hostname already backed up, not overwriting");
         }
         hostname = fs::read_to_string("/run/djinn.hostname.orig")?;
     }
@@ -337,7 +338,7 @@ fn _backup_hostname(verb: bool) -> io::Result<String> {
     // return either the current (just backed up),
     // or the previously backed up hostname
     if verb {
-        println!("  - completed hostname backup");
+        println!("djinn:  - successful");
     }
     Ok(hostname.trim().to_string())
 }
@@ -345,7 +346,7 @@ fn _backup_hostname(verb: bool) -> io::Result<String> {
 fn _backup_hosts(verb: bool) -> io::Result<()> {
     // dump existing hosts
     if verb {
-        println!("  backing up hosts");
+        println!("djinn:  backing up hosts");
     }
 
     // check if hosts backed up -> only backup if not currently
@@ -353,18 +354,18 @@ fn _backup_hosts(verb: bool) -> io::Result<()> {
         let hosts: String = fs::read_to_string("/etc/hosts")?;
         fs::write("/run/djinn.hosts.orig", &hosts)?;
     } else if verb {
-        println!("  - hosts already backed up, not overwriting");
+        println!("djinn:  - hosts already backed up, not overwriting");
     }
 
     if verb {
-        println!("  - completed hosts backup");
+        println!("djinn:  - successful");
     }
     Ok(())
 }
 
 fn _set_hostname(verb: bool, hostname: &str) -> io::Result<()> {
     if verb {
-        println!("  setting hostname -> {}", hostname);
+        println!("djinn:  setting hostname via bind mount -> {}", hostname);
     }
 
     // save our custom hostname
@@ -381,14 +382,14 @@ fn _set_hostname(verb: bool, hostname: &str) -> io::Result<()> {
     }
 
     if verb {
-        println!("  - hostname set and bind mount successful");
+        println!("djinn:  - successful");
     }
     Ok(())
 }
 
 fn _set_hosts(verb: bool) -> io::Result<()> {
     if verb {
-        println!("  setting up hosts file for patches");
+        println!("djinn:  setting up hosts file bind mount");
     }
 
     let hosts: String = fs::read_to_string("/etc/hosts")?;
@@ -405,14 +406,14 @@ fn _set_hosts(verb: bool) -> io::Result<()> {
     }
 
     if verb {
-        println!("  - bind mount successful");
+        println!("djinn:  - successful");
     }
     Ok(())
 }
 
 fn _patch_hosts(verb: bool, old: &str, new: &str) -> io::Result<()> {
     if verb {
-        println!("  patching hosts: {} -> {}", old, new);
+        println!("djinn:  patching hosts: {} -> {}", old, new);
     }
 
     let hosts: String = fs::read_to_string("/etc/hosts")?;
@@ -433,7 +434,7 @@ fn _patch_hosts(verb: bool, old: &str, new: &str) -> io::Result<()> {
     fs::write("/run/djinn.hosts", out)?;
 
     if verb {
-        println!("  - successful");
+        println!("djinn:  - successful");
     }
     Ok(())
 }
@@ -441,7 +442,7 @@ fn _patch_hosts(verb: bool, old: &str, new: &str) -> io::Result<()> {
 fn _saveenv(verb: bool) -> io::Result<()> {
     // dump environment variables
     if verb {
-        println!("  dumping wsl environment")
+        println!("djinn:  dumping wsl environment")
     }
 
     // read the WSL variables
@@ -449,7 +450,7 @@ fn _saveenv(verb: bool) -> io::Result<()> {
     for key in ENVARS.iter() {
         match env::var(key) {
             Ok(val) => out.push_str(&format!("{}={}\n", key, val)),
-            Err(e) => println!("missing variable {} -> {}", key, e),
+            Err(e) => println!("djinn:  - missing variable {} -> {}", key, e),
         }
     }
 
@@ -457,14 +458,14 @@ fn _saveenv(verb: bool) -> io::Result<()> {
     fs::write("/run/djinn.env", out)?;
 
     if verb {
-        println!("  - successful");
+        println!("djinn:  - successful");
     }
     Ok(())
 }
 
 fn _cleanup(verb: bool) -> io::Result<()> {
     if verb {
-        println!("  cleaning up")
+        println!("djinn:  cleaning up")
     }
 
     if let Err(_e) = mount::umount::<str>("/etc/hosts") {
@@ -476,7 +477,7 @@ fn _cleanup(verb: bool) -> io::Result<()> {
     }
 
     if verb {
-        println!("  - bind mounts removed")
+        println!("djinn:  - bind mounts removed")
     }
 
     fs::copy("/run/djinn.hosts", "/etc/hosts")?;
@@ -487,7 +488,7 @@ fn _cleanup(verb: bool) -> io::Result<()> {
     fs::remove_file("/run/djinn.hostname.orig")?;
 
     if verb {
-        println!("  - files removed")
+        println!("djinn:  - files removed")
     }
     Ok(())
 }
@@ -513,7 +514,7 @@ fn _get_env(envars: &mut Vec<ffi::CString>, envnames: &mut String) {
     envars.push(ffi::CString::new(format!("TERM={}", env::var("TERM").unwrap())).unwrap());
     let data = fs::read_to_string("/run/djinn.env").unwrap_or_default();
     if data.is_empty() {
-        println!("! missing wsl envars")
+        println!("djinn: ? missing wsl envars")
     }
     for line in data.lines() {
         envars.push(ffi::CString::new(line).unwrap());
@@ -531,7 +532,7 @@ fn _grab_root(verb: bool) {
 fn _jump_user(verb: bool, user_id: unistd::Uid, group_id: unistd::Gid) {
     if verb {
         println!(
-            "{}:{} -> {}:{}",
+            "djinn: jumping - {}:{} -> {}:{}",
             unistd::getuid(),
             unistd::getgid(),
             user_id,

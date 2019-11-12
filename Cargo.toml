@@ -1,6 +1,6 @@
 [package]
 name = "djinn"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Zachary Riedlshah <git@zacharyrs.me>"]
 description = "an opinionated rust knockoff of genie"
 edition = "2018"
