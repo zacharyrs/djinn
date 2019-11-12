@@ -11,7 +11,7 @@ use std::time::Duration;
 extern crate clap;
 use clap::{
     app_from_crate, crate_authors, crate_description, crate_name, crate_version, AppSettings, Arg,
-    SubCommand,
+    ArgGroup, SubCommand,
 };
 
 extern crate nix;
@@ -43,12 +43,44 @@ fn main() {
                         .multiple(true)
                         .required(true),
                 ),
+            SubCommand::with_name("net")
+                .about("network related functions")
+                .setting(AppSettings::ArgRequiredElseHelp)
+                .setting(AppSettings::DeriveDisplayOrder)
+                .setting(AppSettings::DisableHelpSubcommand)
+                .args(&[
+                    Arg::with_name("vm_ip").help("return the ip of the wsl linux client"),
+                    Arg::with_name("vm_subnet").help("return the subnet of the linux client"),
+                    Arg::with_name("win_ip").help("return the ip of the wsl windows host"),
+                    Arg::with_name("win_subnet").help("return the subnet of the windows host"),
+                ])
+                .group(
+                    ArgGroup::with_name("parameter")
+                        .args(&["vm_ip", "vm_subnet", "win_ip", "win_subnet"])
+                        .required(true),
+                ),
             // TODO reenable bottle reversion when functional
             // SubCommand::with_name("revert").about("destruct our bottle"),
         ])
         .get_matches();
 
     let verb: bool = opts.is_present("verbose");
+
+    if let Some(_subopts) = opts.subcommand_matches("net") {
+        if _subopts.is_present("vm_ip") {
+            println!("vm_ip");
+        }
+        if _subopts.is_present("win_ip") {
+            println!("win_ip");
+        }
+        if _subopts.is_present("vm_subnet") {
+            println!("vm_subnet");
+        }
+        if _subopts.is_present("win_subnet") {
+            println!("win_subnet");
+        }
+        return;
+    }
 
     if unistd::geteuid() != unistd::Uid::from_raw(0) {
         println!("djinn needs to be run as root - try the setuid bit");
@@ -81,7 +113,7 @@ fn main() {
     let user_id: unistd::Uid = unistd::getuid();
     let group_id: unistd::Gid = unistd::getgid();
 
-    let systemd_pid: unistd::Pid =
+    let mut systemd_pid: unistd::Pid =
         _get_systemd_pid().expect("failed to determine if systemd is running");
 
     let bottle_exists: bool;
@@ -107,6 +139,9 @@ fn main() {
         }
     }
 
+    let mut envnames: String = String::new();
+    let mut envars: Vec<ffi::CString> = vec![];
+
     if let Some(_subopts) = opts.subcommand_matches("init") {
         if bottle_exists {
             println!("djinn: no need to init - bottle exists");
@@ -118,18 +153,12 @@ fn main() {
         return;
     }
 
-    let mut envnamesv = vec![String::from("TERM")];
-    let mut envars: Vec<ffi::CString> =
-        vec![ffi::CString::new(format!("TERM={}", env::var("TERM").unwrap())).unwrap()];
-    let data = fs::read_to_string("/run/djinn.env").unwrap_or_default();
-    if data.is_empty() {
-        println!("! missing wsl envars")
+    if let Some(_subopts) = opts.subcommand_matches("revert") {
+        _grab_root(verb);
+        revert(verb);
+        _jump_user(verb, user_id, group_id);
+        return;
     }
-    for line in data.lines() {
-        envars.push(ffi::CString::new(line).unwrap());
-        envnamesv.push(line[..line.chars().position(|p| p == '=').unwrap()].to_string());
-    }
-    let envnames = envnamesv.join(",");
 
     if let Some(_subopts) = opts.subcommand_matches("shell") {
         if bottle_inside {
@@ -138,8 +167,9 @@ fn main() {
         }
         _grab_root(verb);
         if !bottle_exists {
-            init(verb);
+            systemd_pid = init(verb);
         }
+        _get_env(&mut envars, &mut envnames);
         shell(verb, systemd_pid, &user_name, &envars, &envnames);
         _jump_user(verb, user_id, group_id);
         return;
@@ -157,22 +187,16 @@ fn main() {
         }
         _grab_root(verb);
         if !bottle_exists {
-            init(verb);
+            systemd_pid = init(verb);
         }
+        _get_env(&mut envars, &mut envnames);
         run(verb, systemd_pid, &user_name, &envars, command);
-        _jump_user(verb, user_id, group_id);
-        return;
-    }
-
-    if let Some(_subopts) = opts.subcommand_matches("revert") {
-        _grab_root(verb);
-        revert(verb);
         _jump_user(verb, user_id, group_id);
         return;
     }
 }
 
-fn init(verb: bool) {
+fn init(verb: bool) -> unistd::Pid {
     // init a bottle
     if verb {
         println!("djinn: beginning bottle init...");
@@ -201,9 +225,14 @@ fn init(verb: bool) {
         .output()
         .expect("failed to launch systemd");
 
-    while _get_systemd_pid().unwrap() == unistd::Pid::from_raw(0) {
+    let mut systemd_pid: unistd::Pid = _get_systemd_pid().unwrap();
+
+    while systemd_pid == unistd::Pid::from_raw(0) {
         thread::sleep(Duration::from_millis(500));
+        systemd_pid = _get_systemd_pid().unwrap();
     }
+
+    systemd_pid
 }
 
 fn revert(verb: bool) {
@@ -477,6 +506,20 @@ fn _get_systemd_pid() -> io::Result<unistd::Pid> {
     }
 
     Ok(unistd::Pid::from_raw(0))
+}
+
+fn _get_env(envars: &mut Vec<ffi::CString>, envnames: &mut String) {
+    let mut envnamesv = vec![String::from("TERM")];
+    envars.push(ffi::CString::new(format!("TERM={}", env::var("TERM").unwrap())).unwrap());
+    let data = fs::read_to_string("/run/djinn.env").unwrap_or_default();
+    if data.is_empty() {
+        println!("! missing wsl envars")
+    }
+    for line in data.lines() {
+        envars.push(ffi::CString::new(line).unwrap());
+        envnamesv.push(line[..line.chars().position(|p| p == '=').unwrap()].to_string());
+    }
+    envnames.push_str(&envnamesv.join(","));
 }
 
 fn _grab_root(verb: bool) {

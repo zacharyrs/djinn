@@ -6,7 +6,7 @@ note: **wsl2** is required!
 
 ## why
 
-i wanted to try learn some [`rust`](https://www.rust-lang.org/), and `dotnet` is a [pain on arch](https://www.reddit.com/r/archlinux/comments/cx64r5/the_state_of_net_core_on_arch/)
+i wanted to try play with [`rust`](https://www.rust-lang.org/), and `dotnet` is a [pain on arch](https://www.reddit.com/r/archlinux/comments/cx64r5/the_state_of_net_core_on_arch/)
 
 ## usage
 
@@ -81,3 +81,16 @@ additionally, but not mentioned for [`genie`](https://github.com/arkane-systems/
 you can call `shutdown`, but `systemd` tries to unmount disks and breaks things...
 
 `wsl --shutdown` works though
+
+## future work
+
+though i'm sure i'll come up with something new to add, right now it's just...
+
+- [ ] a `net` subcommand, to aid in networking setup
+
+  - [ ] `vm_ip` - ip address of the wsl instance
+  - [ ] `vm_range` - ip subnet for the wsl instance
+  - [ ] `win_ip` - ip address of windows host
+  - [ ] `win_range` - ip subnet for the wsl host
+
+  making a few notes, it seems that wsl2 has a shared eth0 interface, 172.x.y.y/20, where x is shared for windows/linux, and y.y is per os
