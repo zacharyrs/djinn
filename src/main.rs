@@ -3,21 +3,15 @@ use std::env;
 use std::ffi;
 use std::fs;
 use std::io::{self};
-use std::path;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-extern crate clap;
 use clap::{
     app_from_crate, crate_authors, crate_description, crate_name, crate_version, AppSettings, Arg,
-    ArgGroup, SubCommand,
+    SubCommand,
 };
-
-extern crate nix;
-use nix::{mount, unistd};
-
-extern crate sysinfo;
+use nix::{mount, sys::wait, unistd};
 use sysinfo::{ProcessExt, SystemExt};
 
 static SUFFIX: &str = "-wsl";
@@ -43,69 +37,40 @@ fn main() {
                         .multiple(true)
                         .required(true),
                 ),
-            SubCommand::with_name("net")
-                .about("network related functions")
-                .setting(AppSettings::ArgRequiredElseHelp)
-                .setting(AppSettings::DeriveDisplayOrder)
-                .setting(AppSettings::DisableHelpSubcommand)
-                .args(&[
-                    Arg::with_name("vm_ip").help("return the ip of the wsl linux client"),
-                    Arg::with_name("vm_subnet").help("return the subnet of the linux client"),
-                    Arg::with_name("win_ip").help("return the ip of the wsl windows host"),
-                    Arg::with_name("win_subnet").help("return the subnet of the windows host"),
-                ])
-                .group(
-                    ArgGroup::with_name("parameter")
-                        .args(&["vm_ip", "vm_subnet", "win_ip", "win_subnet"])
-                        .required(true),
-                ),
-            // TODO reenable bottle reversion when functional
-            // SubCommand::with_name("revert").about("destruct our bottle"),
+            SubCommand::with_name("cleanup").about("destroy the bottle bottle"),
         ])
         .get_matches();
 
     let verb: bool = opts.is_present("verbose");
-
-    if let Some(_subopts) = opts.subcommand_matches("net") {
-        if _subopts.is_present("vm_ip") {
-            println!("vm_ip");
-        }
-        if _subopts.is_present("win_ip") {
-            println!("win_ip");
-        }
-        if _subopts.is_present("vm_subnet") {
-            println!("vm_subnet");
-        }
-        if _subopts.is_present("win_subnet") {
-            println!("win_subnet");
-        }
-        return;
-    }
 
     if unistd::geteuid() != unistd::Uid::from_raw(0) {
         println!("! djinn needs to be run as root - try the setuid bit");
         return;
     }
 
-    if !fs::read_to_string("/proc/sys/kernel/osrelease")
-        .unwrap()
-        .to_lowercase()
-        .contains("microsoft")
-    {
-        println!("! djinn must be run within wsl");
+    // check we're in linux
+    if !cfg!(unix) {
+        println!("! djinn must be run within wsl 2");
         return;
     }
 
+    // check for wsl1
     for line in fs::read_to_string("/proc/self/mounts").unwrap().lines() {
         let mnt: Vec<_> = line.split_whitespace().collect();
         if mnt[1] == "/" {
-            if mnt[2] == "lxfs" {
-                println!("! djinn only supports wsl2");
+            if mnt[2] == "lxfs" || mnt[2] == "wslfs" {
+                println!("! djinn must be run within wsl 2");
                 return;
             } else {
                 break;
             }
         }
+    }
+
+    // check for wsl2
+    if !fs::metadata("/run/WSL").unwrap().is_dir() {
+        println!("! djinn must be run within wsl 2");
+        return;
     }
 
     let user_name: String = env::var("LOGNAME").expect("failed to get username");
@@ -153,13 +118,6 @@ fn main() {
         return;
     }
 
-    if let Some(_subopts) = opts.subcommand_matches("revert") {
-        _grab_root(verb);
-        revert(verb);
-        _jump_user(verb, user_id, group_id);
-        return;
-    }
-
     if let Some(_subopts) = opts.subcommand_matches("shell") {
         if bottle_inside {
             println!("djinn: no need to make a shell - we're in the bottle");
@@ -176,14 +134,18 @@ fn main() {
     }
 
     if let Some(subopts) = opts.subcommand_matches("run") {
-        let mut command: Vec<ffi::CString> = vec![];
-        for i in subopts.values_of("command").unwrap() {
-            command.push(ffi::CString::new(i).unwrap())
-        }
+        let command_string: Vec<ffi::CString> = subopts
+            .values_of("command")
+            .unwrap()
+            .map(|s| ffi::CString::new(s).unwrap())
+            .collect();
+        let command: Vec<&ffi::CStr> = command_string.iter().map(|s| s.as_c_str()).collect();
         if bottle_inside {
             println!("djinn: no need to enter bottle - we're in it already");
             _get_env(&mut envars, &mut envnames);
-            unistd::execvpe(&command[0], &command, &envars).expect("failed to launch shell");
+
+            let envars_obj: Vec<&ffi::CStr> = envars.iter().map(|s| s.as_c_str()).collect();
+            unistd::execvpe(&command[0], &command, &envars_obj).expect("failed to launch shell");
             return;
         }
         _grab_root(verb);
@@ -191,7 +153,22 @@ fn main() {
             systemd_pid = init(verb);
         }
         _get_env(&mut envars, &mut envnames);
-        run(verb, systemd_pid, &user_name, &envars, command);
+        run(verb, systemd_pid, &user_name, &envars, command_string);
+        _jump_user(verb, user_id, group_id);
+        return;
+    }
+
+    if let Some(_subopts) = opts.subcommand_matches("cleanup") {
+        if bottle_inside {
+            println!("djinn: can't shutdown from inside bottle");
+            return;
+        }
+        _grab_root(verb);
+        if !bottle_exists {
+            println!("djinn: no bottle exists to shutdown");
+            return;
+        }
+        cleanup(verb, systemd_pid);
         _jump_user(verb, user_id, group_id);
         return;
     }
@@ -203,9 +180,7 @@ fn init(verb: bool) -> unistd::Pid {
         println!("djinn: beginning bottle init...");
     }
 
-    let hostname = _backup_hostname(verb).expect("failed to backup hostname");
-    _backup_hosts(verb).expect("failed to backup hosts");
-
+    let hostname = fs::read_to_string("/etc/hostname").expect("failed to get hostname");
     let new_hostname = format!("{}{}", hostname, SUFFIX);
 
     _set_hostname(verb, &new_hostname).expect("failed to set custom hostname");
@@ -236,17 +211,57 @@ fn init(verb: bool) -> unistd::Pid {
     systemd_pid
 }
 
-fn revert(verb: bool) {
+fn cleanup(verb: bool, systemd_pid: unistd::Pid) {
     // destroy a bottle
     if verb {
         println!("djinn: beginning bottle destruction...");
     }
 
-    let hostname = _backup_hostname(verb).expect("failed to get original hostname");
-    let new_hostname = format!("{}{}", hostname, SUFFIX);
-    _patch_hosts(verb, &new_hostname, &hostname).expect("failed to revert hosts patches");
+    let args: Vec<ffi::CString> = [
+        "/usr/bin/nsenter",
+        "-t",
+        &format!("{}", systemd_pid),
+        "-m",
+        "-p",
+        "/usr/sbin/systemctl",
+        "poweroff",
+    ]
+    .iter()
+    .map(|&s| ffi::CString::new(s).unwrap())
+    .collect();
 
-    _cleanup(verb).expect("failed to cleanup");
+    let args_obj: Vec<&ffi::CStr> = args.iter().map(|s| s.as_c_str()).collect();
+
+    unistd::execv(args_obj[0], &args_obj).expect("failed to shutdown bottle");
+
+    if verb {
+        println!("djinn:  - waiting for bottle shutdown")
+    }
+
+    wait::waitpid(systemd_pid, None).expect("djinn:  - bottle failed to shut down, aborting");
+    if verb {
+        println!("djinn:  - bottle has shut down")
+    }
+
+    if let Err(_e) = mount::umount::<str>("/etc/hosts") {
+        panic!(io::Error::last_os_error());
+    }
+
+    if let Err(_e) = mount::umount::<str>("/etc/hostname") {
+        panic!(io::Error::last_os_error());
+    }
+
+    if verb {
+        println!("djinn:  - bind mounts removed")
+    }
+
+    fs::remove_file("/run/djinn.env").expect("failed during tidyup");
+    fs::remove_file("/run/djinn.hosts").expect("failed during tidyup");
+    fs::remove_file("/run/djinn.hostname").expect("failed during tidyup");
+
+    if verb {
+        println!("djinn:  - files removed")
+    }
 }
 
 fn shell(
@@ -261,8 +276,7 @@ fn shell(
         println!("djinn: let's make a shell");
     }
 
-    let mut args = vec![];
-    for &i in [
+    let args: Vec<ffi::CString> = [
         "/usr/bin/nsenter",
         "-t",
         &format!("{}", systemd_pid),
@@ -275,11 +289,13 @@ fn shell(
         envnames,
     ]
     .iter()
-    {
-        args.push(ffi::CString::new(i).unwrap());
-    }
+    .map(|&s| ffi::CString::new(s).unwrap())
+    .collect();
 
-    unistd::execve(&args[0], &args, envars).expect("failed to launch shell");
+    let args_obj: Vec<&ffi::CStr> = args.iter().map(|s| s.as_c_str()).collect();
+    let envars_obj: Vec<&ffi::CStr> = envars.iter().map(|s| s.as_c_str()).collect();
+
+    unistd::execve(args_obj[0], &args_obj, &envars_obj).expect("failed to launch shell");
 }
 
 fn run(
@@ -294,8 +310,7 @@ fn run(
         println!("djinn: let's run something");
     }
 
-    let mut args = vec![];
-    for &i in [
+    let mut args: Vec<ffi::CString> = [
         "/usr/bin/nsenter",
         "-t",
         &format!("{}", systemd_pid),
@@ -308,59 +323,16 @@ fn run(
         "--",
     ]
     .iter()
-    {
-        args.push(ffi::CString::new(i).unwrap());
-    }
+    .map(|&s| ffi::CString::new(s).unwrap())
+    .collect();
 
     args.append(&mut command);
 
-    unistd::execve(&args[0], &args, &envars).expect("failed to launch shell");
-}
+    let args_obj: Vec<&ffi::CStr> = args.iter().map(|s| s.as_c_str()).collect();
 
-fn _backup_hostname(verb: bool) -> io::Result<String> {
-    // dump existing hostname
-    if verb {
-        println!("djinn:  backing up hostname");
-    }
+    let envars_obj: Vec<&ffi::CStr> = envars.iter().map(|s| s.as_c_str()).collect();
 
-    // check if hostname backed up -> only backup if not currently
-    let hostname: String;
-    if !path::Path::new("/run/djinn.hostname.orig").exists() {
-        hostname = fs::read_to_string("/etc/hostname")?;
-        fs::write("/run/djinn.hostname.orig", &hostname)?;
-    } else {
-        if verb {
-            println!("djinn:  - hostname already backed up, not overwriting");
-        }
-        hostname = fs::read_to_string("/run/djinn.hostname.orig")?;
-    }
-
-    // return either the current (just backed up),
-    // or the previously backed up hostname
-    if verb {
-        println!("djinn:  - successful");
-    }
-    Ok(hostname.trim().to_string())
-}
-
-fn _backup_hosts(verb: bool) -> io::Result<()> {
-    // dump existing hosts
-    if verb {
-        println!("djinn:  backing up hosts");
-    }
-
-    // check if hosts backed up -> only backup if not currently
-    if !path::Path::new("/run/djinn.hosts.orig").exists() {
-        let hosts: String = fs::read_to_string("/etc/hosts")?;
-        fs::write("/run/djinn.hosts.orig", &hosts)?;
-    } else if verb {
-        println!("djinn:  - hosts already backed up, not overwriting");
-    }
-
-    if verb {
-        println!("djinn:  - successful");
-    }
-    Ok(())
+    unistd::execve(args_obj[0], &args_obj, &envars_obj).expect("failed to launch shell");
 }
 
 fn _set_hostname(verb: bool, hostname: &str) -> io::Result<()> {
@@ -459,36 +431,6 @@ fn _saveenv(verb: bool) -> io::Result<()> {
 
     if verb {
         println!("djinn:  - successful");
-    }
-    Ok(())
-}
-
-fn _cleanup(verb: bool) -> io::Result<()> {
-    if verb {
-        println!("djinn:  cleaning up")
-    }
-
-    if let Err(_e) = mount::umount::<str>("/etc/hosts") {
-        return Err(io::Error::last_os_error());
-    }
-
-    if let Err(_e) = mount::umount::<str>("/etc/hostname") {
-        return Err(io::Error::last_os_error());
-    }
-
-    if verb {
-        println!("djinn:  - bind mounts removed")
-    }
-
-    fs::copy("/run/djinn.hosts", "/etc/hosts")?;
-    fs::remove_file("/run/djinn.env")?;
-    fs::remove_file("/run/djinn.hosts")?;
-    fs::remove_file("/run/djinn.hosts.orig")?;
-    fs::remove_file("/run/djinn.hostname")?;
-    fs::remove_file("/run/djinn.hostname.orig")?;
-
-    if verb {
-        println!("djinn:  - files removed")
     }
     Ok(())
 }

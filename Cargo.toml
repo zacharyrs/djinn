@@ -1,14 +1,14 @@
 [package]
 name = "djinn"
-version = "0.2.1"
+version = "0.3.0"
 authors = ["Zachary Riedlshah <git@zacharyrs.me>"]
 description = "an opinionated rust knockoff of genie"
 edition = "2018"
 
 [dependencies]
-clap = "2.33.0"
-nix = "0.15.0"
-sysinfo = "0.9.6"
+clap = "2.33.3"
+nix = "0.18.0"
+sysinfo = "0.15.1"
 
 [profile.release]
 lto = true

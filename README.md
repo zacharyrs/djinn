@@ -11,7 +11,7 @@ i wanted to try play with [`rust`](https://www.rust-lang.org/), and `dotnet` is 
 ## usage
 
 ```none
-djinn 0.1.0
+djinn 0.3.0
 Zachary Riedlshah <git@zacharyrs.me>
 an opinionated rust knockoff of genie
 
@@ -24,14 +24,15 @@ FLAGS:
     -V, --version    Prints version information
 
 SUBCOMMANDS:
-    init     set up a bottle
-    shell    launch a shell inside bottle, sets up a bottle if necessary
-    run      run a command inside bottle, sets up a bottle if necessary
+    init       set up a bottle
+    shell      launch a shell inside bottle, sets up a bottle if necessary
+    run        run a command inside bottle, sets up a bottle if necessary
+    cleanup    destroy the bottle bottle
 ```
 
-it's pretty much the same as [`genie`](https://github.com/arkane-systems/genie#usage)
+it's pretty much the same as [`genie`](https://github.com/arkane-systems/genie) but in rust
 
-note: the subcommands infer, meaning you can just write `i`, `s`, and `r`.
+note: the subcommands infer, meaning you can just write `i`, `s`, `r`, and `c`.
 
 ## requirements
 
@@ -46,7 +47,7 @@ note: the first two are likely included in your os
 unlike [`genie`](https://github.com/arkane-systems/genie), `djinn` doesn't need...
 
 - `dotnet`
-- `hostess`
+- ~~`hostess`~~ (not necessary in new releases)
 
 ## installation
 
@@ -74,23 +75,10 @@ unfortunately there's still a few problems `djinn` can't solve...
 in particular, the same bugs from [`genie`](https://github.com/arkane-systems/genie#bugs)
 
 > - breaks `/proc` based tools
-> - it's clunky
-
-additionally, but not mentioned for [`genie`](https://github.com/arkane-systems/genie#bugs), there isn't a clean way to kill the bottle
-
-you can call `shutdown`, but `systemd` tries to unmount disks and breaks things...
-
-`wsl --shutdown` works though
+> - it's clunky (less than dotnet though!)
 
 ## future work
 
 though i'm sure i'll come up with something new to add, right now it's just...
 
-- [ ] a `net` subcommand, to aid in networking setup
-
-  - [ ] `vm_ip` - ip address of the wsl instance
-  - [ ] `vm_range` - ip subnet for the wsl instance
-  - [ ] `win_ip` - ip address of windows host
-  - [ ] `win_range` - ip subnet for the wsl host
-
-  making a few notes, it seems that wsl2 has a shared eth0 interface, 172.x.y.y/20, where x is shared for windows/linux, and y.y is per os
+- [ ] a [configuration system](https://github.com/zacharyrs/djinn/issues/2) like `genie`
