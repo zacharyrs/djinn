@@ -1,6 +1,6 @@
 [package]
 name = "djinn"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["Zachary Riedlshah <git@zacharyrs.me>"]
 description = "an opinionated rust knockoff of genie"
 edition = "2018"
@@ -9,6 +9,7 @@ edition = "2018"
 clap = "2.33.3"
 nix = "0.18.0"
 sysinfo = "0.15.1"
+# configparser = "1.0.0"
 
 [profile.release]
 lto = true

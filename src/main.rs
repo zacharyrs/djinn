@@ -11,7 +11,7 @@ use clap::{
     app_from_crate, crate_authors, crate_description, crate_name, crate_version, AppSettings, Arg,
     SubCommand,
 };
-use nix::{mount, sys::wait, unistd};
+use nix::{mount, unistd};
 use sysinfo::{ProcessExt, SystemExt};
 
 static SUFFIX: &str = "-wsl";
@@ -180,12 +180,14 @@ fn init(verb: bool) -> unistd::Pid {
         println!("djinn: beginning bottle init...");
     }
 
-    let hostname = fs::read_to_string("/etc/hostname").expect("failed to get hostname");
+    let hostname = fs::read_to_string("/etc/hostname")
+        .expect("failed to get hostname")
+        .trim()
+        .to_string();
     let new_hostname = format!("{}{}", hostname, SUFFIX);
 
     _set_hostname(verb, &new_hostname).expect("failed to set custom hostname");
-    _set_hosts(verb).expect("failed to prepare hosts");
-    _patch_hosts(verb, &hostname, &new_hostname).expect("failed to set custom hosts");
+    _set_hosts(verb, &hostname, &new_hostname).expect("failed to set custom hosts");
 
     _saveenv(verb).expect("failed to dump environment");
 
@@ -211,43 +213,47 @@ fn init(verb: bool) -> unistd::Pid {
     systemd_pid
 }
 
-fn cleanup(verb: bool, systemd_pid: unistd::Pid) {
+fn cleanup(verb: bool, mut systemd_pid: unistd::Pid) {
     // destroy a bottle
     if verb {
         println!("djinn: beginning bottle destruction...");
     }
 
-    let args: Vec<ffi::CString> = [
-        "/usr/bin/nsenter",
-        "-t",
-        &format!("{}", systemd_pid),
-        "-m",
-        "-p",
-        "/usr/sbin/systemctl",
-        "poweroff",
-    ]
-    .iter()
-    .map(|&s| ffi::CString::new(s).unwrap())
-    .collect();
+    let _exiter = Command::new("/usr/bin/nsenter")
+        .args(&[
+            "/usr/bin/nsenter",
+            "-t",
+            &format!("{}", systemd_pid),
+            "-m",
+            "-p",
+            "/usr/sbin/systemctl",
+            "poweroff",
+        ])
+        .output()
+        .expect("failed to launch systemd");
 
-    let args_obj: Vec<&ffi::CStr> = args.iter().map(|s| s.as_c_str()).collect();
+    systemd_pid = _get_systemd_pid().unwrap();
 
-    unistd::execv(args_obj[0], &args_obj).expect("failed to shutdown bottle");
+    if systemd_pid != unistd::Pid::from_raw(0) {
+        if verb {
+            println!("djinn:  - waiting for bottle shutdown")
+        }
 
-    if verb {
-        println!("djinn:  - waiting for bottle shutdown")
+        while systemd_pid != unistd::Pid::from_raw(0) {
+            thread::sleep(Duration::from_millis(500));
+            systemd_pid = _get_systemd_pid().unwrap();
+        }
     }
 
-    wait::waitpid(systemd_pid, None).expect("djinn:  - bottle failed to shut down, aborting");
     if verb {
         println!("djinn:  - bottle has shut down")
     }
 
-    if let Err(_e) = mount::umount::<str>("/etc/hosts") {
+    if mount::umount("/etc/hosts").is_err() {
         panic!(io::Error::last_os_error());
     }
 
-    if let Err(_e) = mount::umount::<str>("/etc/hostname") {
+    if mount::umount("/etc/hostname").is_err() {
         panic!(io::Error::last_os_error());
     }
 
@@ -343,13 +349,15 @@ fn _set_hostname(verb: bool, hostname: &str) -> io::Result<()> {
     // save our custom hostname
     fs::write("/run/djinn.hostname", format!("{}\n", hostname))?;
 
-    if let Err(_e) = mount::mount::<str, str, str, str>(
+    if mount::mount::<str, str, str, str>(
         Some("/run/djinn.hostname"),
         "/etc/hostname",
         None,
         mount::MsFlags::MS_BIND,
         None,
-    ) {
+    )
+    .is_err()
+    {
         return Err(io::Error::last_os_error());
     }
 
@@ -359,33 +367,9 @@ fn _set_hostname(verb: bool, hostname: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn _set_hosts(verb: bool) -> io::Result<()> {
+fn _set_hosts(verb: bool, old: &str, new: &str) -> io::Result<()> {
     if verb {
-        println!("djinn:  setting up hosts file bind mount");
-    }
-
-    let hosts: String = fs::read_to_string("/etc/hosts")?;
-    fs::write("/run/djinn.hosts", hosts)?;
-
-    if let Err(_e) = mount::mount::<str, str, str, str>(
-        Some("/run/djinn.hosts"),
-        "/etc/hosts",
-        None,
-        mount::MsFlags::MS_BIND,
-        None,
-    ) {
-        return Err(io::Error::last_os_error());
-    }
-
-    if verb {
-        println!("djinn:  - successful");
-    }
-    Ok(())
-}
-
-fn _patch_hosts(verb: bool, old: &str, new: &str) -> io::Result<()> {
-    if verb {
-        println!("djinn:  patching hosts: {} -> {}", old, new);
+        println!("djinn:  create patched hosts file: {} -> {}", old, new);
     }
 
     let hosts: String = fs::read_to_string("/etc/hosts")?;
@@ -404,6 +388,25 @@ fn _patch_hosts(verb: bool, old: &str, new: &str) -> io::Result<()> {
     }
 
     fs::write("/run/djinn.hosts", out)?;
+
+    if verb {
+        println!("djinn:  - successful");
+    }
+    if verb {
+        println!("djinn:  setting up hosts file bind mount");
+    }
+
+    if mount::mount::<str, str, str, str>(
+        Some("/run/djinn.hosts"),
+        "/etc/hosts",
+        None,
+        mount::MsFlags::MS_BIND,
+        None,
+    )
+    .is_err()
+    {
+        return Err(io::Error::last_os_error());
+    }
 
     if verb {
         println!("djinn:  - successful");

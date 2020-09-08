@@ -47,7 +47,7 @@ note: the first two are likely included in your os
 unlike [`genie`](https://github.com/arkane-systems/genie), `djinn` doesn't need...
 
 - `dotnet`
-- ~~`hostess`~~ (not necessary in new releases)
+- ~~`hostess`~~ (not necessary in new releases of genie)
 
 ## installation
 
