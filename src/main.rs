@@ -11,11 +11,43 @@ use clap::{
     app_from_crate, crate_authors, crate_description, crate_name, crate_version, AppSettings, Arg,
     SubCommand,
 };
+use figment::{
+    providers::{Format, Serialized, Toml},
+    Figment,
+};
 use nix::{mount, unistd};
+use serde::{Deserialize, Serialize};
 use sysinfo::{ProcessExt, SystemExt};
 
-static SUFFIX: &str = "-wsl";
+static CONFIG_PATH: &str = "/etc/djinn.cfg";
 static ENVARS: [&str; 3] = ["WSL_DISTRO_NAME", "WSL_INTEROP", "WSLENV"];
+
+static VERBOSE: bool = false;
+static PRESERVE_ENV: bool = false;
+static SUFFIX: &str = "-wsl";
+static UNSHARE: &str = "/usr/bin/unshare";
+static DAEMONIZE: &str = "/usr/sbin/daemonize";
+
+#[derive(Deserialize, Serialize)]
+struct Config {
+    verbose: bool,
+    preserve_env: bool,
+    suffix: String,
+    unshare: String,
+    daemonize: String,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            verbose: VERBOSE,
+            preserve_env: PRESERVE_ENV,
+            suffix: SUFFIX.to_string(),
+            unshare: UNSHARE.to_string(),
+            daemonize: DAEMONIZE.to_string(),
+        }
+    }
+}
 
 fn main() {
     let opts = app_from_crate!()
@@ -42,6 +74,11 @@ fn main() {
         .get_matches();
 
     let verb: bool = opts.is_present("verbose");
+
+    let config: Config = Figment::from(Serialized::defaults(Config::default()))
+        .merge(Toml::file(CONFIG_PATH))
+        .extract()
+        .expect("! djinn failed to create config");
 
     if unistd::geteuid() != unistd::Uid::from_raw(0) {
         println!("! djinn needs to be run as root - try the setuid bit");

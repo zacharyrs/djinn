@@ -1,15 +1,16 @@
 [package]
 name = "djinn"
-version = "0.3.1"
+version = "0.3.2"
 authors = ["Zachary Riedlshah <git@zacharyrs.me>"]
 description = "an opinionated rust knockoff of genie"
 edition = "2018"
 
 [dependencies]
 clap = "2.33.3"
-nix = "0.18.0"
-sysinfo = "0.15.1"
-# configparser = "1.0.0"
+nix = "0.20.0"
+sysinfo = "0.16.4"
+serde = { version = "1.0.123", features = ["derive"] }
+figment = { version = "0.10.3", features = ["toml"] }
 
 [profile.release]
 lto = true
